@@ -10,6 +10,13 @@
 namespace blackbone
 {
 
+
+enum class MemProtectionCasting
+{
+    none,   // Don't change provided memory protection flags
+    useDep  // Strip executable flag if DEP is off
+};
+
 class ProcessMemory : public RemoteMemory
 {
 public:
@@ -25,6 +32,16 @@ public:
     /// <param name="desired">false if caller will be responsible for block deallocation</param>
     /// <returns>Memory block. If failed - returned block will be invalid</returns>
     BLACKBONE_API call_result_t<MemBlock> Allocate( size_t size, DWORD protection = PAGE_EXECUTE_READWRITE, ptr_t desired = 0, bool own = true );
+
+    /// <summary>
+    /// Allocate new memory block as close to a desired location as possible
+    /// </summary>
+    /// <param name="size">Block size</param>
+    /// <param name="protection">Memory protection</param>
+    /// <param name="desired">Desired base address of new block</param>
+    /// <param name="desired">false if caller will be responsible for block deallocation</param>
+    /// <returns>Memory block. If failed - returned block will be invalid</returns>
+    BLACKBONE_API call_result_t<MemBlock> AllocateClosest( size_t size, DWORD protection = PAGE_EXECUTE_READWRITE, ptr_t desired = 0, bool own = true );
 
     /// <summary>
     /// Free memory
@@ -77,7 +94,7 @@ public:
     /// Otherwise function will fail if there is at least one non-committed page in region.
     /// </param>
     /// <returns>Status</returns>
-    BLACKBONE_API NTSTATUS Read( std::vector<ptr_t>&& adrList, size_t dwSize, PVOID pResult, bool handleHoles = false );
+    BLACKBONE_API NTSTATUS Read( const std::vector<ptr_t>& adrList, size_t dwSize, PVOID pResult, bool handleHoles = false );
 
     /// <summary>
     /// Write data
@@ -95,7 +112,7 @@ public:
     /// <param name="dwSize">Size of data to write</param>
     /// <param name="pData">Buffer to write</param>
     /// <returns>Status</returns>
-    BLACKBONE_API NTSTATUS Write( std::vector<ptr_t>&& adrList, size_t dwSize, const void* pData );
+    BLACKBONE_API NTSTATUS Write( const std::vector<ptr_t>& adrList, size_t dwSize, const void* pData );
 
     /// <summary>
     /// Read data
@@ -178,6 +195,18 @@ public:
     /// <returns>Found regions</returns>
     BLACKBONE_API std::vector<MEMORY_BASIC_INFORMATION64> EnumRegions( bool includeFree = false );
 
+    /// <summary>
+    /// Get memory protection casting behavior 
+    /// </summary>
+    /// <returns>current behavior</returns>
+    BLACKBONE_API MemProtectionCasting protectionCasting() {  return _casting; }
+
+    /// <summary>
+    /// Set memory protection casting behavior 
+    /// </summary>
+    /// <param name="flag">new behavior</param>
+    BLACKBONE_API void protectionCasting( MemProtectionCasting casting ) { _casting = casting; }
+
     BLACKBONE_API inline class ProcessCore& core() { return _core; }
     BLACKBONE_API inline class Process* process()  { return _process; }
 
@@ -188,6 +217,7 @@ private:
 private:
     class Process* _process;    // Owning process object
     class ProcessCore& _core;   // Core routines
+    MemProtectionCasting _casting = MemProtectionCasting::useDep;
 };
 
 }

@@ -35,6 +35,12 @@ public:
     {
     }
 
+    // memory object
+    BLACKBONE_API inline ProcessMemory& memory()
+    { 
+        return _memory; 
+    }
+    
     // Native context
     BLACKBONE_API inline _CONTEXT64& native()
     { 
@@ -134,7 +140,7 @@ public:
                 return _ctx.R9;
 
             default:
-                return _memory.Read<DWORD64>( _ctx.Rsp + 0x30 + (index - 4) * _wordSize ).result( 0 );
+                return _memory.Read<DWORD64>( _ctx.Rsp + 0x28 + (index - 4) * _wordSize ).result( 0 );
             }
         }
         else
@@ -173,7 +179,7 @@ public:
                 break;
 
             default:
-                return (_memory.Write( _ctx.Rsp + 0x30 + (index - 4) * _wordSize, val ) == STATUS_SUCCESS);
+                return (_memory.Write( _ctx.Rsp + 0x28 + (index - 4) * _wordSize, val ) == STATUS_SUCCESS);
             }
 
             return true;

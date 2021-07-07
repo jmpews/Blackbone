@@ -89,13 +89,15 @@ call_result_t<MemBlock> MemBlock::Allocate(
     )
 {
     ptr_t desired64 = desired;
-    DWORD newProt = CastProtection( protection, process.core().DEP() );
+    DWORD finalProt = protection;
+    if(process.protectionCasting() == MemProtectionCasting::useDep)
+        finalProt = CastProtection( protection, process.core().DEP() );
     
-    NTSTATUS status = process.core().native()->VirtualAllocExT( desired64, size, MEM_RESERVE | MEM_COMMIT, newProt );
+    NTSTATUS status = process.core().native()->VirtualAllocExT( desired64, size, MEM_RESERVE | MEM_COMMIT, finalProt );
     if (!NT_SUCCESS( status ))
     {
         desired64 = 0;
-        status = process.core().native()->VirtualAllocExT( desired64, size, MEM_COMMIT, newProt );
+        status = process.core().native()->VirtualAllocExT( desired64, size, MEM_COMMIT, finalProt );
         if (NT_SUCCESS( status ))
             return call_result_t<MemBlock>( MemBlock( &process, desired64, size, protection, own ), STATUS_IMAGE_NOT_AT_BASE );
         else
@@ -105,6 +107,89 @@ call_result_t<MemBlock> MemBlock::Allocate(
     BLACKBONE_TRACE(L"Allocate: Allocating at address 0x%p (0x%X bytes)", static_cast<uintptr_t>(desired64), size);
 #endif
     return MemBlock( &process, desired64, size, protection, own );
+}
+
+call_result_t<MemBlock> MemBlock::AllocateClosest(
+	class ProcessMemory& process,
+	size_t size,
+	ptr_t desired,
+	DWORD protection /*= PAGE_EXECUTE_READWRITE*/,
+	bool own /*= true*/
+	)
+{
+    DWORD finalProt = protection;
+    if(process.protectionCasting() == MemProtectionCasting::useDep)
+        finalProt = CastProtection( protection, process.core().DEP() );
+
+    NTSTATUS status = STATUS_SUCCESS;
+
+    uint32_t pageSize = process.core().native()->pageSize();
+    ptr_t alignedSize = Align( size, pageSize );
+
+    SYSTEM_INFO sinfo;
+    GetNativeSystemInfo(&sinfo);
+
+    MemBlock buf;
+
+    ptr_t leftLimit = (ptr_t) sinfo.lpMinimumApplicationAddress;
+    ptr_t rightLimit = (ptr_t) sinfo.lpMaximumApplicationAddress;
+
+    ptr_t right = (desired / pageSize) * pageSize;
+    ptr_t left = right - alignedSize;
+
+    MEMORY_BASIC_INFORMATION64 minfo;
+
+    while (left != 0)
+    {
+    	if (desired-left < right-desired  &&  left >= leftLimit  &&  left != 0)
+    	{
+    		// Look to the left
+    		if (process.core().native()->VirtualQueryExT( left, &minfo ))
+				break;
+
+    		if (minfo.State == MEM_FREE  &&  minfo.RegionSize >= size)
+    		{
+    			status = process.core().native()->VirtualAllocExT( left, size, MEM_RESERVE | MEM_COMMIT, finalProt );
+				if (NT_SUCCESS( status ))
+				{
+					buf = MemBlock( &process, left, size, protection, own );
+					break;
+				}
+    		}
+    		else
+    		{
+    			left = minfo.AllocationBase - alignedSize;
+    		}
+    	}
+    	else if (right < rightLimit)
+    	{
+    		// Look to the right
+    		if (process.core().native()->VirtualQueryExT( right, &minfo ))
+    			break;
+
+    		if (minfo.State == MEM_FREE  &&  minfo.RegionSize >= size)
+    		{
+    			status = process.core().native()->VirtualAllocExT( right, size, MEM_RESERVE | MEM_COMMIT, finalProt );
+    			if (NT_SUCCESS( status ))
+    			{
+    				buf = MemBlock( &process, right, size, protection, own );
+    				break;
+    			}
+    		}
+    		else
+    		{
+    			right = minfo.BaseAddress + minfo.RegionSize;
+    		}
+    	}
+    	else
+    	{
+    		break;
+    	}
+    }
+
+    if (!buf.valid())
+    	return MemBlock::Allocate( process, size, desired, protection, own );
+    return buf;
 }
 
 /// <summary>
@@ -157,13 +242,15 @@ NTSTATUS MemBlock::Protect( DWORD protection, uintptr_t offset /*= 0*/, size_t s
     if (!_pImpl)
         return STATUS_MEMORY_NOT_ALLOCATED;
 
-    auto prot = CastProtection( protection, _pImpl->_memory->core().DEP() );
+    DWORD finalProt = protection;
+    if (_pImpl->_memory->protectionCasting() == MemProtectionCasting::useDep)
+        finalProt = CastProtection( protection, _pImpl->_memory->core().DEP() );
 
     if (size == 0)
         size = _pImpl->_size;
 
-    return _pImpl->_physical ? Driver().ProtectMem( _pImpl->_memory->core().pid(), _pImpl->_ptr + offset, size, prot ) :
-        _pImpl->_memory->Protect( _pImpl->_ptr + offset, size, prot, pOld );
+    return _pImpl->_physical ? Driver().ProtectMem( _pImpl->_memory->core().pid(), _pImpl->_ptr + offset, size, finalProt ) :
+        _pImpl->_memory->Protect( _pImpl->_ptr + offset, size, finalProt, pOld );
 }
 
 /// <summary>

@@ -3,7 +3,7 @@
 
 #include "../Config.h"
 #pragma warning(disable : 4100)
-#include <AsmJit/AsmJit.h>
+#include "../../3rd_party/AsmJit/AsmJit.h"
 #pragma warning(default : 4100)
 
 #include <vector>
@@ -53,12 +53,17 @@ struct AsmVariant
         {
             set( imm, argSize, static_cast<uint64_t>(arg) );
         }
-        // char*, const char*, char[], etc.
+        // Array of elements
+        else if constexpr(std::is_array_v<std::remove_reference_t<T>>)
+        {
+            set( dataPtr, sizeof( arg ), reinterpret_cast<uint64_t>(arg) );
+        }
+        // char*, const char*, etc.
         else if constexpr(is_string_ptr<RAW_T, char>)
         {
             set( dataPtr, strlen( arg ) + 1, reinterpret_cast<uint64_t>(arg) );
         }
-        // wchar_t*, const wchar_t*, wchar[], etc.
+        // wchar_t*, const wchar_t*, etc.
         else if constexpr(is_string_ptr<RAW_T, wchar_t>)
         {
             set( dataPtr, (wcslen( arg ) + 1) * sizeof( wchar_t ), reinterpret_cast<uint64_t>(arg) );
@@ -183,7 +188,7 @@ struct AsmVariant
     };
 
     uint64_t new_imm_val = 0;       // Replaced immediate value for dataPtr type
-    std::vector<std::byte> buf;     // Value buffer
+    std::vector<uint8_t> buf;       // Value buffer
 };
 
 /// <summary>

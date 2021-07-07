@@ -6,17 +6,13 @@
 #include "../../Misc/trace.hpp"
 #include "../../Symbols/SymbolData.h"
 
-#include "../contrib/VersionHelpers.h"
+#include <3rd_party/VersionApi.h>
 
 namespace blackbone
 {
 
 NtLdr::NtLdr( Process& proc )
     : _process( proc )
-{
-}
-
-NtLdr::~NtLdr(void)
 {
 }
 
@@ -365,7 +361,7 @@ NTSTATUS NtLdr::UnloadTLS( const NtLdrEntry& mod, bool noThread /*= false*/ )
     uint64_t result = 0;
 
     a->GenPrologue();
-    a->GenCall( LdrpReleaseTlsEntry, { mod.ldrPtr, 0 }, cc_fastcall );
+    a->GenCall( LdrpReleaseTlsEntry, { mod.ldrPtr, 0 }, IsWindows8Point1OrGreater() ? cc_fastcall : cc_stdcall );
 
     _process.remote().AddReturnWithEvent( *a );
     a->GenEpilogue();
@@ -648,7 +644,7 @@ void NtLdr::InsertTailList( ptr_t ListHead, ptr_t Entry )
 /// <summary>
 /// Hash image name
 /// </summary>
-/// <param name="str">Iamge name</param>
+/// <param name="str">Image name</param>
 /// <returns>Hash</returns>
 ULONG NtLdr::HashString( const std::wstring& str )
 {
@@ -658,7 +654,7 @@ ULONG NtLdr::HashString( const std::wstring& str )
     {
         UNICODE_STRING ustr;
         SAFE_CALL( RtlInitUnicodeString, &ustr, str.c_str() );
-        SAFE_NATIVE_CALL( RtlHashUnicodeString, &ustr, (BOOLEAN)TRUE, 0, &hash );
+        SAFE_NATIVE_CALL( RtlHashUnicodeString, &ustr, BOOLEAN(TRUE), 0, &hash );
     }
     else
     {
@@ -835,30 +831,11 @@ bool NtLdr::FindLdrpModuleIndexBase()
 template<typename T>
 bool NtLdr::FindLdrHeap()
 {
-    int32_t retries = 50;
-    _PEB_T<T> Peb = { 0 };
-
-    _process.core().peb<T>( &Peb );
-    for (; Peb.Ldr == 0 && retries > 0; retries--, Sleep( 10 ))
-        _process.core().peb<T>( &Peb );
-
-    if (Peb.Ldr)
+    _PEB_T<T> peb = { };
+    if (_process.core().peb<T>( &peb ) != 0)
     {
-        auto Ldr = _process.memory().Read<_PEB_LDR_DATA2_T<T>>( Peb.Ldr );
-        if (!Ldr)
-            return false;
-
-        for (; Ldr->InMemoryOrderModuleList.Flink == Ldr->InMemoryOrderModuleList.Blink && retries > 0; retries--, Sleep( 10 ))
-            Ldr = _process.memory().Read<_PEB_LDR_DATA2_T<T>>( Peb.Ldr );
-
-        MEMORY_BASIC_INFORMATION64 mbi = { 0 };
-        auto NtdllEntry = Ldr->InMemoryOrderModuleList.Flink;
-        if (NT_SUCCESS( _process.core().native()->VirtualQueryExT( NtdllEntry, &mbi ) ))
-        {
-            _LdrHeapBase = static_cast<T>(mbi.AllocationBase);
-            assert( _LdrHeapBase != _process.modules().GetModule( L"ntdll.dll" )->baseAddress );
-            return true;
-        }
+        _LdrHeapBase = peb.ProcessHeap;
+        return true;
     }
 
     return false;

@@ -23,12 +23,12 @@ PDBHelper::PDBHelper()
 
     // If _NT_SYMBOL_PATH exists, use it
     wchar_t path[MAX_PATH] = { };
-    if (GetEnvironmentVariableW( L"_NT_SYMBOL_PATH", path, _countof( path ) ) == -1)
+    if (GetEnvironmentVariableW( L"_NT_SYMBOL_PATH", path, _countof( path ) ) == 0)
     {
-        if (GetTempPathW( _countof( path ), path ) != -1)
+        if (GetTempPathW( _countof( path ), path ) != 0)
         {
             std::wstringstream wss;
-            wss << L"srv*" << path << L"Symbols*https://msdl.microsoft.com/download/symbols";
+            wss << L"srv*" << path << L"Symbols*http://msdl.microsoft.com/download/symbols";
             _sympath = wss.str();
         }
     }
@@ -96,15 +96,17 @@ HRESULT PDBHelper::CoCreateDiaDataSource()
         HMODULE hMod = LoadLibraryW( L"msdia140.dll" );
         if (!hMod)
         {
-            BLACKBONE_TRACE( "PDB: Failed to load msdia140.dll, error 0x08%x", GetLastError() );
-            return HRESULT_FROM_WIN32( GetLastError() );
+            const auto err = GetLastError();
+            BLACKBONE_TRACE( "PDB: Failed to load msdia140.dll, error 0x%08x", err );
+            return HRESULT_FROM_WIN32( err );
         }
 
         auto DllGetClassObject = reinterpret_cast<BOOL( WINAPI* )(REFCLSID, REFIID, LPVOID)>(GetProcAddress( hMod, "DllGetClassObject" ));
         if (!DllGetClassObject)
         {
+            const auto err = GetLastError();
             BLACKBONE_TRACE( "PDB: Failed to get DllGetClassObject from msdia140.dll" );
-            return HRESULT_FROM_WIN32( GetLastError() );
+            return HRESULT_FROM_WIN32( err );
         }
 
         CComPtr<IClassFactory> classFactory;
@@ -114,7 +116,7 @@ HRESULT PDBHelper::CoCreateDiaDataSource()
 
     if (FAILED( hr ))
     {
-        BLACKBONE_TRACE( "PDB: %s failed with HRESULT 0x08%x", __FUNCTION__, hr );
+        BLACKBONE_TRACE( "PDB: %s failed with HRESULT 0x%08x", __FUNCTION__, hr );
     }
 
     return hr;
@@ -134,7 +136,7 @@ HRESULT PDBHelper::PopulateSymbols()
     while (SUCCEEDED( symbols->Next( 1, &symbol, &count ) ) && count != 0)
     {
         DWORD rva = 0;
-        BSTR name = nullptr;
+        CComBSTR name;
 
         symbol->get_relativeVirtualAddress( &rva );
         symbol->get_undecoratedName( &name );

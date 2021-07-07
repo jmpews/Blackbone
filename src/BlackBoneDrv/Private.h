@@ -45,6 +45,8 @@
 #define THREAD_CREATE_FLAGS_SKIP_THREAD_ATTACH      0x00000002
 #define THREAD_CREATE_FLAGS_HIDE_FROM_DEBUGGER      0x00000004
 
+#define MI_SYSTEM_RANGE_START (ULONG_PTR)(0xFFFF080000000000) // start of system space
+
 #define EX_ADDITIONAL_INFO_SIGNATURE (ULONG_PTR)(-2)
 
 #define KI_USER_SHARED_DATA 0xFFFFF78000000000UI64
@@ -82,6 +84,20 @@
 #ifndef PTE_BASE
 #define PTE_BASE    0xFFFFF68000000000UI64
 #endif
+
+#ifndef _WIN64
+#define KDDEBUGGER_DATA_OFFSET 0x1068
+#else
+#define KDDEBUGGER_DATA_OFFSET 0x2080
+#endif
+
+#ifndef _WIN64
+#define DUMP_BLOCK_SIZE 0x20000
+#else
+#define DUMP_BLOCK_SIZE 0x40000
+#endif
+
+#define PHYSICAL_ADDRESS_BITS 40
 
 #define ObpDecodeGrantedAccess( Access ) \
     ((Access)& ~ObpAccessProtectCloseBit)
@@ -136,14 +152,19 @@ typedef PULONG PWIN32_PROTECTION_MASK;
 
 typedef enum _WinVer
 {
-    WINVER_7     = 0x0610,
-    WINVER_7_SP1 = 0x0611,
-    WINVER_8     = 0x0620,
-    WINVER_81    = 0x0630,
-    WINVER_10    = 0x0A00,
-    WINVER_10_AU = 0x0A01,
-    WINVER_10_CU = 0x0A02,
-    WINVER_10_FC = 0x0A03,
+    WINVER_7      = 0x0610,
+    WINVER_7_SP1  = 0x0611,
+    WINVER_8      = 0x0620,
+    WINVER_81     = 0x0630,
+    WINVER_10     = 0x0A00,
+    WINVER_10_RS1 = 0x0A01, // Anniversary update
+    WINVER_10_RS2 = 0x0A02, // Creators update
+    WINVER_10_RS3 = 0x0A03, // Fall creators update
+    WINVER_10_RS4 = 0x0A04, // Spring creators update
+    WINVER_10_RS5 = 0x0A05, // October 2018 update
+    WINVER_10_19H1 = 0x0A06, // May 2019 update 19H1
+    WINVER_10_19H2 = 0x0A07, // November 2019 update 19H2
+    WINVER_10_20H1 = 0x0A08, // April 2020 update 20H1
 } WinVer;
 
 extern PLIST_ENTRY PsLoadedModuleList;
@@ -155,6 +176,7 @@ extern MMPTE ValidKernelPte;
 typedef struct _DYNAMIC_DATA
 {
     WinVer  ver;            // OS version
+    ULONG   buildNo;        // OS build revision
     BOOLEAN correctBuild;   // OS kernel build number is correct and supported
 
     ULONG KExecOpt;         // KPROCESS::ExecuteOptions 
@@ -163,7 +185,7 @@ typedef struct _DYNAMIC_DATA
     ULONG ObjTable;         // EPROCESS::ObjectTable
     ULONG VadRoot;          // EPROCESS::VadRoot
     ULONG NtProtectIndex;   // NtProtectVirtualMemory SSDT index
-    ULONG NtCreateThdIndex; // NtCreateThreadEx SSDT index
+    ULONG NtCreateThdExIndex; // NtCreateThreadEx SSDT index
     ULONG NtTermThdIndex;   // NtTerminateThread SSDT index
     ULONG PrevMode;         // KTHREAD::PreviousMode
     ULONG ExitStatus;       // ETHREAD::ExitStatus
@@ -252,6 +274,24 @@ RtlAvlRemoveNode(
     );
 
 #endif
+
+ULONG
+NTAPI
+KeCapturePersistentThreadState(
+    IN PCONTEXT Context,
+    IN PKTHREAD Thread,
+    IN ULONG BugCheckCode,
+    IN ULONG BugCheckParameter1,
+    IN ULONG BugCheckParameter2,
+    IN ULONG BugCheckParameter3,
+    IN ULONG BugCheckParameter4,
+    OUT PVOID VirtualAddress
+);
+
+/// <summary>
+/// Initialize debugger block g_KdBlock
+/// </summary>
+VOID InitializeDebuggerBlock();
 
 /// <summary>
 /// Lookup handle in the process handle table

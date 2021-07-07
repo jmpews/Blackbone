@@ -129,6 +129,19 @@ public:
     /// <summary>
     /// Get export address. Forwarded exports will be automatically resolved if forward module is present
     /// </summary>
+    /// <param name="hMod">Module to search in</param>
+    /// <param name="name_ord">Function name or ordinal</param>
+    /// <param name="baseModule">Import module name. Only used to resolve ApiSchema during manual map.</param>
+    /// <returns>Export info. If failed procAddress field is 0</returns>
+    BLACKBONE_API call_result_t<exportData> GetExport(
+        const ModuleData& hMod,
+        const char* name_ord,
+        const wchar_t* baseModule = L""
+    );
+
+    /// <summary>
+    /// Get export address. Forwarded exports will be automatically resolved if forward module is present
+    /// </summary>
     /// <param name="modName">Module name to search in</param>
     /// <param name="name_ord">Function name or ordinal</param>
     /// <returns>Export info. If failed procAddress field is 0</returns>
@@ -193,7 +206,15 @@ public:
     /// </summary>
     /// <param name="mod">Module data</param>
     /// <returns>Module info</returns>
-    BLACKBONE_API ModuleDataPtr AddManualModule( ModuleData mod );
+    BLACKBONE_API ModuleDataPtr AddManualModule( const ModuleData& mod );
+
+    /// <summary>
+    /// Canonicalize paths and set module type to manual if requested
+    /// </summary>
+    /// <param name="mod">Module data</param>
+    /// <param name="manual">Value to set ModuleData::manual to</param>
+    /// <returns>Module data</returns>
+    BLACKBONE_API ModuleData Canonicalize( const ModuleData& mod, bool manual );
 
     /// <summary>
     /// Remove module from module list

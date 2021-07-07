@@ -204,7 +204,7 @@ void RemoteHook::Restore( const HookData &hook, uint64_t ptr )
         }   
         else
         {
-            auto& threads = _memory.process()->threads().getAll();
+            auto threads = _memory.process()->threads().getAll();
             for (auto& thread : threads)
                 thread->RemoveHWBP( ptr );
         }
@@ -297,6 +297,7 @@ DWORD RemoteHook::EventThread()
     if (_debugPID != 0)
     {
         DebugActiveProcessStop( _debugPID );
+
         _debugPID = 0;
     }
 

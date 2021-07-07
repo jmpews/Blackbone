@@ -9,13 +9,14 @@
 
 #include <memory>
 #include <type_traits>
+#include <iterator>
 
 #ifdef COMPILER_MSVC
 #include <mscoree.h>
 #include <metahost.h>
 #endif
 
-#include <VersionHelpers.h>
+#include <3rd_party/VersionApi.h>
 
 namespace blackbone
 {
@@ -135,7 +136,7 @@ ModuleDataPtr ProcessModules::GetModule(
 /// <returns>Module data. nullptr if not found</returns>
 ModuleDataPtr ProcessModules::GetMainModule()
 {
-    if (_proc.barrier().x86OS)
+    if (_proc.barrier().targetWow64)
     {
         _PEB32 peb = { 0 };
         if (_proc.core().peb32( &peb ) == 0)
@@ -207,27 +208,39 @@ ProcessModules::mapModules ProcessModules::GetManualModules()
 /// <returns>Export info. If failed procAddress field is 0</returns>
 call_result_t<exportData> ProcessModules::GetExport( const ModuleDataPtr& hMod, const char* name_ord, const wchar_t* baseModule /*= L""*/ )
 {
+    return GetExport( *hMod, name_ord, baseModule );
+}
+
+/// <summary>
+/// Get export address. Forwarded exports will be automatically resolved if forward module is present
+/// </summary>
+/// <param name="hMod">Module to search in</param>
+/// <param name="name_ord">Function name or ordinal</param>
+/// <param name="baseModule">Import module name. Only used to resolve ApiSchema during manual map.</param>
+/// <returns>Export info. If failed procAddress field is 0</returns>
+call_result_t<exportData> ProcessModules::GetExport( const ModuleData& hMod, const char* name_ord, const wchar_t* baseModule /*= L"0"*/ )
+{
     exportData data;
 
-    /// Invalid module
-    if (hMod == nullptr || hMod->baseAddress == 0)
+    // Invalid module
+    if (hMod.baseAddress == 0)
         return STATUS_INVALID_PARAMETER_1;
-    
+
     std::unique_ptr<IMAGE_EXPORT_DIRECTORY, decltype(&free)> expData( nullptr, &free );
 
     IMAGE_DOS_HEADER hdrDos = { 0 };
-    uint8_t hdrNt32[sizeof(IMAGE_NT_HEADERS64)] = { 0 };
+    uint8_t hdrNt32[sizeof( IMAGE_NT_HEADERS64 )] = { 0 };
     auto phdrNt32 = reinterpret_cast<PIMAGE_NT_HEADERS32>(hdrNt32);
     auto phdrNt64 = reinterpret_cast<PIMAGE_NT_HEADERS64>(hdrNt32);
     DWORD expSize = 0;
     uintptr_t expBase = 0;
 
-    _memory.Read( hMod->baseAddress, sizeof(hdrDos), &hdrDos );
+    _memory.Read( hMod.baseAddress, sizeof( hdrDos ), &hdrDos );
 
     if (hdrDos.e_magic != IMAGE_DOS_SIGNATURE)
         return STATUS_INVALID_IMAGE_NOT_MZ;
 
-    _memory.Read( hMod->baseAddress + hdrDos.e_lfanew, sizeof(IMAGE_NT_HEADERS64), &hdrNt32 );
+    _memory.Read( hMod.baseAddress + hdrDos.e_lfanew, sizeof( IMAGE_NT_HEADERS64 ), &hdrNt32 );
 
     if (phdrNt32->Signature != IMAGE_NT_SIGNATURE)
         return STATUS_INVALID_IMAGE_FORMAT;
@@ -248,20 +261,22 @@ call_result_t<exportData> ProcessModules::GetExport( const ModuleDataPtr& hMod, 
         expData.reset( reinterpret_cast<IMAGE_EXPORT_DIRECTORY*>(malloc( expSize )) );
         IMAGE_EXPORT_DIRECTORY* pExpData = expData.get();
 
-        _memory.Read( hMod->baseAddress + expBase, expSize, pExpData );
+        if( auto status = _memory.Read( hMod.baseAddress + expBase, expSize, pExpData ); !NT_SUCCESS( status ) )
+            return status;
 
         // Fix invalid directory size
         if (expSize <= sizeof( IMAGE_EXPORT_DIRECTORY ))
         {
             // New size should take care of max number of present names (max name length is assumed to be 255 chars)
             expSize = static_cast<DWORD>(
-                pExpData->AddressOfNameOrdinals - expBase 
+                pExpData->AddressOfNameOrdinals - expBase
                 + max( pExpData->NumberOfFunctions, pExpData->NumberOfNames ) * 255
                 );
 
             expData.reset( reinterpret_cast<IMAGE_EXPORT_DIRECTORY*>(malloc( expSize )) );
             pExpData = expData.get();
-            _memory.Read( hMod->baseAddress + expBase, expSize, pExpData );
+            if (auto status = _memory.Read( hMod.baseAddress + expBase, expSize, pExpData ); !NT_SUCCESS( status ))
+                return status;
         }
 
         WORD* pAddressOfOrds = reinterpret_cast<WORD*>(
@@ -293,17 +308,17 @@ call_result_t<exportData> ProcessModules::GetExport( const ModuleDataPtr& hMod, 
                 return STATUS_NOT_FOUND;
 
             if ((reinterpret_cast<uintptr_t>(name_ord) <= 0xFFFF && (WORD)((uintptr_t)name_ord) == (OrdIndex + pExpData->Base)) ||
-                 (reinterpret_cast<uintptr_t>(name_ord) > 0xFFFF && strcmp( pName, name_ord ) == 0))
+                (reinterpret_cast<uintptr_t>(name_ord) > 0xFFFF && strcmp( pName, name_ord ) == 0))
             {
-                data.procAddress = pAddressOfFuncs[OrdIndex] + hMod->baseAddress;
+                data.procAddress = pAddressOfFuncs[OrdIndex] + hMod.baseAddress;
 
                 // Check forwarded export
-                if (data.procAddress >= hMod->baseAddress + expBase && 
-                    data.procAddress <= hMod->baseAddress + expBase + expSize)
+                if (data.procAddress >= hMod.baseAddress + expBase &&
+                    data.procAddress <= hMod.baseAddress + expBase + expSize)
                 {
                     char forwardStr[255] = { 0 };
 
-                    _memory.Read( data.procAddress, sizeof(forwardStr), forwardStr );
+                    _memory.Read( data.procAddress, sizeof( forwardStr ), forwardStr );
 
                     std::string chainExp( forwardStr );
 
@@ -484,11 +499,14 @@ call_result_t<ModuleDataPtr> ProcessModules::Inject( const std::wstring& path, T
     }
 
     // Retry with LoadLibrary if possible
-    if (!NT_SUCCESS( status ) && pLoadLibrary && sameArch)
-        status = _proc.remote().ExecDirect( pLoadLibrary->procAddress, modName->ptr() + ustrSize );
-
-    if (!NT_SUCCESS( status ))
-        return status;
+    if (!NT_SUCCESS(status) && pLoadLibrary && sameArch)
+    {
+        auto result = _proc.remote().ExecDirect( pLoadLibrary->procAddress, modName->ptr() + ustrSize );
+        if (result == 0)
+        {
+            return status;
+        }
+    }
 
     return GetModule( path, LdrList, img.mType() );
 }
@@ -567,14 +585,32 @@ bool ProcessModules::ValidateModule( module_t base )
 /// </summary>
 /// <param name="mod">Module data</param>
 /// <returns>Module info</returns>
-ModuleDataPtr ProcessModules::AddManualModule( ModuleData mod )
+ModuleDataPtr ProcessModules::AddManualModule( const ModuleData& mod )
 {
-    mod.fullPath = Utils::ToLower( std::move( mod.fullPath ) );
-    mod.name = Utils::ToLower( std::move( mod.name ) );
-    mod.manual = true;
+    auto canonicalized = Canonicalize( mod, true );
+    auto key = std::make_pair( canonicalized.name, canonicalized.type );
+    return _modules.emplace( key, std::make_shared<const ModuleData>( canonicalized ) ).first->second;
+}
 
-    auto key = std::make_pair( mod.name, mod.type );
-    return _modules.emplace( key, std::make_shared<const ModuleData>( mod ) ).first->second;
+/// <summary>
+/// Canonicalize paths and set module type to manual if requested
+/// </summary>
+/// <param name="mod">Module data</param>
+/// <param name="manual">Value to set ModuleData::manual to</param>
+/// <returns>Module data</returns>
+ModuleData ProcessModules::Canonicalize( const ModuleData& mod, bool manual )
+{
+    ModuleData result = {};
+
+    result.baseAddress = mod.baseAddress;
+    result.ldrPtr = mod.ldrPtr;
+    result.size = mod.size;
+    result.type = mod.type;
+    result.fullPath = Utils::ToLower( mod.fullPath );
+    result.name = Utils::ToLower( mod.name );
+    result.manual = manual;
+
+    return result;
 }
 
 /// <summary>

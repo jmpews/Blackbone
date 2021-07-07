@@ -123,7 +123,7 @@ void AsmHelper32::GenCall( const AsmFunctionPtr& pFN, const std::vector<AsmVaria
 /// Save eax value and terminate current thread
 /// </summary>
 /// <param name="pExitThread">NtTerminateThread address</param>
-/// <param name="resultPtr">Memry where eax value will be saved</param>
+/// <param name="resultPtr">Memory where eax value will be saved</param>
 void AsmHelper32::ExitThreadWithStatus( uint64_t pExitThread, uint64_t resultPtr )
 {
     if (resultPtr != 0)
@@ -194,7 +194,6 @@ void AsmHelper32::PushArg( const AsmVariant& arg, eArgType regidx /*= AT_stack*/
 {
     switch (arg.type)
     {
-
     case AsmVariant::imm:
     case AsmVariant::structRet:
         // TODO: resolve 64bit imm values instead of ignoring high bits
@@ -202,7 +201,7 @@ void AsmHelper32::PushArg( const AsmVariant& arg, eArgType regidx /*= AT_stack*/
         break;
 
     case AsmVariant::dataPtr:
-        PushArgp( arg.new_imm_val, regidx );
+        PushArgp( arg.new_imm_val != 0 ? arg.new_imm_val : arg.imm_val, regidx );
         break;
 
         // Copy argument onto stack   
